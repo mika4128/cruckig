@@ -1,0 +1,98 @@
+# Build CPack DEB packages in official Debian/Ubuntu Docker images and attach them
+# to GitHub Releases when a version tag (v*) is pushed.
+#
+# Uses `docker run` (not `jobs.<id>.container`) so actions/checkout runs on the
+# GitHub runner; very old Ubuntu images lack a usable Node runtime for JS actions.
+#
+# CMake >= 3.15: ci-deb-setup.sh installs a Kitware CMake tarball when the distro
+# package is too old (e.g. Debian 10, Ubuntu 14.04–18.04 depending on archive).
+
+name: Build DEB packages
+
+on:
+  push:
+    branches: [main, master]
+    tags:
+      - 'v*'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deb-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deb:
+    name: ${{ matrix.label }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { image: debian:10, label: debian-10, old_release: '0' }
+          - { image: debian:11, label: debian-11, old_release: '0' }
+          - { image: debian:12, label: debian-12, old_release: '0' }
+          # Debian 13 — use trixie until debian:13 is published on Docker Hub
+          - { image: debian:trixie, label: debian-13, old_release: '0' }
+          - { image: ubuntu:trusty, label: ubuntu-14.04, old_release: '1' }
+          - { image: ubuntu:xenial, label: ubuntu-16.04, old_release: '1' }
+          - { image: ubuntu:bionic, label: ubuntu-18.04, old_release: '0' }
+          - { image: ubuntu:focal, label: ubuntu-20.04, old_release: '0' }
+          - { image: ubuntu:jammy, label: ubuntu-22.04, old_release: '0' }
+          - { image: ubuntu:noble, label: ubuntu-24.04, old_release: '0' }
+          - { image: ubuntu:rolling, label: ubuntu-rolling, old_release: '0' }
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build and package in container
+        env:
+          OLD_RELEASE: ${{ matrix.old_release }}
+          DISTRO_LABEL: ${{ matrix.label }}
+        run: |
+          set -euo pipefail
+          docker pull "${{ matrix.image }}"
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/workspace" \
+            -e OLD_RELEASE \
+            -e DISTRO_LABEL \
+            "${{ matrix.image }}" \
+            bash /workspace/.github/scripts/ci-deb-docker-entry.sh
+
+      - name: Upload DEB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-${{ matrix.label }}
+          path: build/*.deb
+          if-no-files-found: error
+
+  release:
+    name: Publish release assets
+    needs: deb
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all DEB artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-debs
+          pattern: deb-*
+          merge-multiple: true
+
+      - name: List packages
+        run: find release-debs -type f -name '*.deb' -print
+
+      - name: Upload DEBs to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-debs/*.deb
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

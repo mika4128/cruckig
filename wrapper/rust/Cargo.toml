@@ -1,0 +1,23 @@
+[package]
+name = "cruckig"
+version = "0.1.0"
+edition = "2021"
+description = "Rust bindings for cruckig — jerk-limited real-time trajectory generation"
+license = "MIT"
+links = "cruckig"
+
+[lib]
+name = "cruckig"
+path = "src/lib.rs"
+
+[build-dependencies]
+bindgen = "0.71"
+cc = "1"
+
+[[example]]
+name = "position"
+path = "examples/01_position.rs"
+
+[[example]]
+name = "velocity"
+path = "examples/05_velocity.rs"
